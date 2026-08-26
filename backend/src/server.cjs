@@ -1,10 +1,14 @@
 const express = require('express')
 const cors = require('cors')
 
+const assistantRoutes = require('./routes/assistantRoutes.cjs')
+
 const app = express()
 
 app.use(cors())
 app.use(express.json())
+
+app.use('/api', assistantRoutes)
 
 app.get('/health', (req, res) => {
   res.json({
