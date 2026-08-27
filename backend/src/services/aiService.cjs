@@ -1,5 +1,5 @@
 const OLLAMA_URL = 'https://ollama.com/api/chat'
-const MODEL = 'glm-5.3-flash:cloud'
+const MODEL = 'gpt-oss:20b'
 
 async function askOllama(messages) {
   const response = await fetch(OLLAMA_URL, {
