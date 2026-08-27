@@ -70,6 +70,8 @@ function containsUnrelatedBusinessExample(text, businessType) {
     'law firm',
     'gym owner',
     'web developer',
+    'clothing store',
+    'fashion brand',
   ]
 
   return unrelatedExamples.some(example => {
@@ -110,6 +112,216 @@ function formatRecommendations(items) {
     .join('\n\n')
 }
 
+function isMarketingPlanRequest(question) {
+  const questionLower = question.toLowerCase()
+
+  return (
+    questionLower.includes('marketing plan') ||
+    questionLower.includes('marketing strategy plan') ||
+    questionLower.includes('create a marketing plan') ||
+    questionLower.includes('make a marketing plan') ||
+    questionLower.includes('generate a marketing plan') ||
+    questionLower.includes('marketing campaign plan')
+  )
+}
+
+async function generateMarketingPlan({
+  userQuestion,
+  businessName,
+  businessType,
+  targetCustomers,
+  monthlyBudget,
+  mainGoal,
+}) {
+  const marketingPlanPrompt = `
+You are BizAI Marketing Plan Generator.
+
+The user explicitly requested a marketing plan.
+
+BUSINESS PROFILE
+
+Business Name: ${businessName}
+Business Type: ${businessType}
+Target Customers: ${targetCustomers}
+Monthly Budget: ${monthlyBudget}
+Main Business Goal: ${mainGoal}
+
+Create a practical marketing plan specifically for THIS business.
+
+MARKETING PLAN REQUIREMENTS:
+
+- Give exactly 3 practical marketing actions.
+- Each action must be specific to this business.
+- Each action must explain what the business should do.
+- Consider where the target customers are likely to be reached.
+- Consider the business type.
+- Consider the main business goal.
+- Consider the monthly budget as a constraint.
+- Prefer realistic and affordable approaches.
+- Prioritize channels that can be tested without large upfront spending.
+- Include a simple way to measure whether each action is working.
+- Focus on practical execution rather than theory.
+
+STRICT RULES:
+
+- Do NOT invent exact advertising costs.
+- Do NOT invent exact campaign costs.
+- Do NOT invent employee payments.
+- Do NOT invent influencer payments.
+- Do NOT invent exact discount percentages.
+- Do NOT invent exact prices.
+- Do NOT invent exact sales numbers.
+- Do NOT invent customer numbers.
+- Do NOT invent profit numbers.
+- Do NOT invent savings numbers.
+- Do NOT promise guaranteed results.
+- Do NOT claim a specific percentage increase.
+- Do NOT assign arbitrary rupee amounts to individual activities.
+- Do NOT create a separate Budget Plan.
+- Do NOT use unrelated business examples.
+- Do NOT mention another industry.
+- Do NOT create made-up facts.
+
+If the monthly budget is known, treat it only as an overall constraint.
+Do not divide or allocate that budget between activities.
+
+OUTPUT:
+
+Return ONLY valid JSON.
+
+Use exactly this format:
+
+{
+  "marketingPlan": [
+    {
+      "action": "short action",
+      "howToExecute": "practical execution steps",
+      "measure": "simple metric to track"
+    },
+    {
+      "action": "short action",
+      "howToExecute": "practical execution steps",
+      "measure": "simple metric to track"
+    },
+    {
+      "action": "short action",
+      "howToExecute": "practical execution steps",
+      "measure": "simple metric to track"
+    }
+  ]
+}
+
+Do NOT return Markdown.
+Do NOT return code fences.
+Do NOT return explanations outside JSON.
+
+USER QUESTION:
+
+${userQuestion}
+`
+
+  const reply = await askOllama([
+    {
+      role: 'system',
+      content: marketingPlanPrompt,
+    },
+    {
+      role: 'user',
+      content: userQuestion,
+    },
+  ])
+
+  return reply
+}
+
+function extractMarketingPlan(reply) {
+  const cleaned = cleanJsonText(reply)
+
+  try {
+    const parsed = JSON.parse(cleaned)
+
+    if (!Array.isArray(parsed?.marketingPlan)) {
+      return []
+    }
+
+    return parsed.marketingPlan
+      .filter(item => item && typeof item === 'object')
+      .map(item => ({
+        action:
+          typeof item.action === 'string'
+            ? item.action.trim()
+            : '',
+        howToExecute:
+          typeof item.howToExecute === 'string'
+            ? item.howToExecute.trim()
+            : '',
+        measure:
+          typeof item.measure === 'string'
+            ? item.measure.trim()
+            : '',
+      }))
+      .filter(item => {
+        return (
+          item.action &&
+          item.howToExecute &&
+          item.measure
+        )
+      })
+  } catch {
+    return []
+  }
+}
+
+function validateMarketingPlan(plan, businessType) {
+  if (!Array.isArray(plan)) {
+    return false
+  }
+
+  if (plan.length !== 3) {
+    return false
+  }
+
+  for (const item of plan) {
+    const combinedText =
+      `${item.action} ${item.howToExecute} ${item.measure}`
+
+    if (!item.action || !item.howToExecute || !item.measure) {
+      return false
+    }
+
+    if (containsUnsafeNumbers(combinedText)) {
+      return false
+    }
+
+    if (containsUnrelatedBusinessExample(
+      combinedText,
+      businessType
+    )) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function formatMarketingPlan(plan) {
+  return [
+    '**Marketing Plan**',
+    '',
+    `1. **Action:** ${plan[0].action}`,
+    `   **How to execute:** ${plan[0].howToExecute}`,
+    `   **Measure:** ${plan[0].measure}`,
+    '',
+    `2. **Action:** ${plan[1].action}`,
+    `   **How to execute:** ${plan[1].howToExecute}`,
+    `   **Measure:** ${plan[1].measure}`,
+    '',
+    `3. **Action:** ${plan[2].action}`,
+    `   **How to execute:** ${plan[2].howToExecute}`,
+    `   **Measure:** ${plan[2].measure}`,
+  ].join('\n')
+}
+
 async function assistantController(req, res) {
   try {
     const { message, business } = req.body
@@ -140,6 +352,110 @@ async function assistantController(req, res) {
     const advisorType =
       business?.advisorType || null
 
+    /*
+      TASK 45 - MARKETING PLAN GENERATOR
+    */
+
+    if (isMarketingPlanRequest(userQuestion)) {
+      const marketingReply = await generateMarketingPlan({
+        userQuestion,
+        businessName,
+        businessType,
+        targetCustomers,
+        monthlyBudget,
+        mainGoal,
+      })
+
+      let marketingPlan =
+        extractMarketingPlan(marketingReply)
+
+      if (!validateMarketingPlan(
+        marketingPlan,
+        businessType
+      )) {
+        const retryPrompt = `
+Return ONLY valid JSON.
+
+Create exactly 3 marketing plan actions for:
+
+Business Name: ${businessName}
+Business Type: ${businessType}
+Target Customers: ${targetCustomers}
+Monthly Budget: ${monthlyBudget}
+Main Goal: ${mainGoal}
+
+Rules:
+- Exactly 3 actions.
+- Every action must fit this business.
+- No unrelated business examples.
+- No percentages.
+- No currency amounts.
+- No exact prices.
+- No exact discount percentages.
+- No exact advertising costs.
+- No savings estimates.
+- No sales estimates.
+- No customer estimates.
+- No guaranteed results.
+- Include action, howToExecute, and measure.
+
+Format:
+
+{
+  "marketingPlan": [
+    {
+      "action": "one",
+      "howToExecute": "steps",
+      "measure": "metric"
+    },
+    {
+      "action": "two",
+      "howToExecute": "steps",
+      "measure": "metric"
+    },
+    {
+      "action": "three",
+      "howToExecute": "steps",
+      "measure": "metric"
+    }
+  ]
+}
+`
+
+        const retryReply = await askOllama([
+          {
+            role: 'system',
+            content: retryPrompt,
+          },
+          {
+            role: 'user',
+            content: userQuestion,
+          },
+        ])
+
+        marketingPlan =
+          extractMarketingPlan(retryReply)
+      }
+
+      if (!validateMarketingPlan(
+        marketingPlan,
+        businessType
+      )) {
+        return res.status(502).json({
+          error:
+            'BizAI generated an invalid marketing plan. Please try again.',
+        })
+      }
+
+      return res.json({
+        reply: formatMarketingPlan(marketingPlan),
+      })
+    }
+
+    /*
+      TASK 41 - SALES ADVISOR
+    */
+
     let advisorInstruction = ''
 
     if (advisorType === 'sales') {
@@ -162,7 +478,13 @@ Every idea MUST fit the actual business type and target customers.
 Do not discuss marketing strategy as the main recommendation.
 Do not discuss cost reduction as the main recommendation.
 `
-    } else if (advisorType === 'marketing') {
+    }
+
+    /*
+      TASK 42 - MARKETING ADVISOR
+    */
+
+    else if (advisorType === 'marketing') {
       advisorInstruction = `
 ADVISOR: MARKETING
 
@@ -182,7 +504,13 @@ Every idea MUST fit the actual business type and target customers.
 Do not turn the answer into a cost-reduction plan.
 Do not turn the answer into a sales-management plan.
 `
-    } else if (advisorType === 'cost') {
+    }
+
+    /*
+      TASK 43 - COST ADVISOR
+    */
+
+    else if (advisorType === 'cost') {
       advisorInstruction = `
 ADVISOR: COST
 
@@ -238,27 +566,19 @@ IMPORTANT BUSINESS RULES:
 - Do not promise guaranteed results.
 - Do not include percentages.
 - Do not include currency amounts.
-- Do not include dollar, euro, or pound amounts.
 - Keep each recommendation practical and concise.
 
 OUTPUT FORMAT:
 
 Return ONLY valid JSON.
 
-The JSON must contain exactly three strings.
+Use exactly:
 
-For SALES use:
-{"recommendations":["recommendation 1","recommendation 2","recommendation 3"]}
-
-For MARKETING use:
-{"recommendations":["recommendation 1","recommendation 2","recommendation 3"]}
-
-For COST use:
-{"recommendations":["recommendation 1","recommendation 2","recommendation 3"]}
+{"recommendations":["one","two","three"]}
 
 Do NOT return Markdown.
 Do NOT return code fences.
-Do NOT return explanations outside the JSON.
+Do NOT return explanations outside JSON.
 `
 
     const reply = await askOllama([
@@ -272,14 +592,13 @@ Do NOT return explanations outside the JSON.
       },
     ])
 
-    let recommendations = extractRecommendations(reply)
+    let recommendations =
+      extractRecommendations(reply)
 
-    /*
-      Validate the model response.
-      If invalid, retry once with an even stricter instruction.
-    */
-
-    if (!validateRecommendations(recommendations, businessType)) {
+    if (!validateRecommendations(
+      recommendations,
+      businessType
+    )) {
       const retryPrompt = `
 Return ONLY valid JSON.
 
@@ -311,6 +630,7 @@ Rules:
 - No exact discounts.
 - No savings estimates.
 - No sales estimates.
+- No customer estimates.
 - No profit estimates.
 - No guaranteed results.
 
@@ -330,20 +650,30 @@ Return exactly:
         },
       ])
 
-      recommendations = extractRecommendations(retryReply)
+      recommendations =
+        extractRecommendations(retryReply)
     }
 
-    if (!validateRecommendations(recommendations, businessType)) {
+    if (!validateRecommendations(
+      recommendations,
+      businessType
+    )) {
       return res.status(502).json({
-        error: 'BizAI generated an invalid advisor response. Please try again.',
+        error:
+          'BizAI generated an invalid advisor response. Please try again.',
       })
     }
 
     res.json({
-      reply: formatRecommendations(recommendations),
+      reply: formatRecommendations(
+        recommendations
+      ),
     })
   } catch (error) {
-    console.error('BizAI controller error:', error)
+    console.error(
+      'BizAI controller error:',
+      error
+    )
 
     res.status(500).json({
       error: 'BizAI request failed',
