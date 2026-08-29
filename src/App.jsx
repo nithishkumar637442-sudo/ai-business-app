@@ -578,7 +578,7 @@ function App() {
 
     try {
       const response = await fetch(
-        'http://localhost:5000/api/assistant',
+        'https://ai-business-app-o669.onrender.com/api/assistant',
         {
           method: 'POST',
           headers: {
